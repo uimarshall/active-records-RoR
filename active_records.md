@@ -83,3 +83,63 @@ You should care that ActiveRecord queries usually return Relations because you�
 If you end up working with a Relation when you really want it to act like an Array, you can sometimes run #to_a on it to force it to evaluate the query.
 
 Methods implemented in ActiveRecord::FinderMethods do NOT return ActiveRecord::Relation objects. The #find, #find_by, #first and #last methods return a single record (a model instance). #take returns an array of model instances. Unlike the methods that return Relation objects, when called, these will run SQL queries immediately.
+
+## Aggregations
+
+Just like with SQL, you often want to group fields together (or “roll up” the values under one header). For example, grouping blog posts written on a certain date. This is most useful when you also apply mathematical operations to them like `#count` or `#max`. An example (a bit more complex because it involves joining two tables) is if I want to get a count of all the blog posts categorized by each tag. I might write something like:
+
+Post.joins(:tags).group("tags.name").count
+
+# => {"tag1" => 4, "tag2" => 2, "tag3" => 5}
+
+## N + 1 Queries
+
+The N + 1 query problem is the classic case of this – you grab all the records for your users (User.all) then loop through each user and call an association it has, like the city the user lives in (user.city). For this example we’re assuming an association exists between User and City, where User belongs_to a City. This might look like:
+
+`User.all.each do |user| puts user.city end`
+This is going to result in one query to get all the users, then another query for each user to find its city through the association… so N additional queries, where N is the total number of users. Hence “N+1” problems.
+If the best way to make an application run faster is to reduce database calls, we’ve just messed up badly by causing a potentially huge number of them.
+
+Rails is well aware of your distress and has provided a simple solution – “eager loading”. When you first grab the list of all users, you can tell Rails to also grab the cities at the same time (with just one additional query) and store them in memory until you’d like to call upon them. Then user.city gets treated the same way as user.name… it doesn’t run another query. The trick is the `#includes` method.
+
+`#includes` basically takes the name of one or more associations that you’d like to load at the same time as your original object and brings them into memory. You can chain it onto other methods like #where or #order clauses.
+
+Almost as useful is the `#pluck` method, which is covered in the Rails Guide. #pluck lets you skip several steps in the process of pulling up a bunch of records, storing them in memory, then grabbing a specific column and placing it into an array. #pluck just gives you the resulting array right away:
+
+`User.pluck(:name)`
+
+# => ["Foo", "Bar", "Baz", "Jimmy-Bob"]
+
+## Scopes
+
+Scopes are underappreciated, awesome and very simple. A scope is basically a custom chain of ActiveRecord methods that you can slap onto an existing Relation by calling its name like a normal method. It’s easiest to see in an example.
+
+Let’s say you let your user choose to filter your blog posts only for those marked “important”:
+
+# app/models/post.rb
+
+```ruby
+scope :important, -> { where(is_important: true) }
+```
+
+# app/controllers/posts_controller.rb
+
+```ruby
+def index
+    if params[:important] == true
+    @posts = Post.important.all
+    else
+    @posts = Post.all
+    end
+end
+```
+
+You might be thinking, Why use a scope when you can write a class method to do the same thing? You can, as long as your class method returns a Relation (which can take some additional thought for edge cases). In fact, using a class method is often best if your logic chains are quite complicated. The example above could be solved using the following class method as well:
+
+# app/models/post.rb
+
+```ruby
+def self.important
+  self.where(is_important: true)
+end
+```
